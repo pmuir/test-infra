@@ -83,6 +83,7 @@ type controller struct {
 	prowJobsDone  bool
 	pipelinesDone map[string]bool
 	wait          string
+	log *logrus.Entry
 }
 
 // PipelineRunRequest request data sent to an external service which starts the pipeline
@@ -165,6 +166,7 @@ func newController(kc kubernetes.Interface, pjc prowjobset.Interface, pji prowjo
 	eventBroadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: kc.CoreV1().Events("")})
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, untypedcorev1.EventSource{Component: controllerName})
 
+	logger := logrus.StandardLogger()
 	c := &controller{
 		config:     prowConfig,
 		pjc:        pjc,
@@ -174,6 +176,7 @@ func newController(kc kubernetes.Interface, pjc prowjobset.Interface, pji prowjo
 		workqueue:  rl,
 		recorder:   recorder,
 		totURL:     totURL,
+		log: logrus.NewEntry(logger),
 	}
 
 	logrus.Info("Setting up event handlers")
@@ -257,7 +260,7 @@ func (c *controller) runWorker() {
 		func() {
 			defer c.workqueue.Done(key)
 
-			if err := reconcile(c, key.(string)); err != nil {
+			if err := c.reconcile(c, key.(string)); err != nil {
 				runtime.HandleError(fmt.Errorf("failed to reconcile %s: %v", key, err))
 				return // Do not forget so we retry later.
 			}
@@ -418,7 +421,7 @@ var (
 )
 
 // reconcile ensures a tekton prowjob has a corresponding pipeline, updating the prowjob's status as the pipeline progresses.
-func reconcile(c reconciler, key string) error {
+func (c *controller) reconcile(r reconciler, key string) error {
 	logrus.Debugf("reconcile: %s\n", key)
 
 	ctx, namespace, name, kind, err := fromKey(key)
@@ -436,7 +439,7 @@ func reconcile(c reconciler, key string) error {
 
 	switch kind {
 	case prowJob:
-		pj, err = c.getProwJob(name)
+		pj, err = r.getProwJob(name)
 		switch {
 		case apierrors.IsNotFound(err):
 			// Do not want pipeline
@@ -461,7 +464,7 @@ func reconcile(c reconciler, key string) error {
 		reported = isReported(&pj.Status)
 
 		selector := fmt.Sprintf("%s = %s", prowJobName, name)
-		p, err = c.getPipelineRunWithSelector(ctx, namespace, selector)
+		p, err = r.getPipelineRunWithSelector(ctx, namespace, selector)
 		switch {
 		case apierrors.IsNotFound(err):
 			// Do not have a pipeline
@@ -472,7 +475,7 @@ func reconcile(c reconciler, key string) error {
 			havePipelineRun = true
 		}
 	case pipelineRun:
-		p, err = c.getPipelineRun(ctx, namespace, name)
+		p, err = r.getPipelineRun(ctx, namespace, name)
 		if err != nil {
 			return fmt.Errorf("no pipelinerun found with name %s: %v", name, err)
 		}
@@ -481,7 +484,7 @@ func reconcile(c reconciler, key string) error {
 			return fmt.Errorf("no prowjob name label for pipelinerun %s: %v", name, err)
 		}
 
-		pj, err = c.getProwJob(prowJobName)
+		pj, err = r.getProwJob(prowJobName)
 		if err != nil {
 			return fmt.Errorf("no matching prowjob for pipelinerun %s: %v", name, err)
 		}
@@ -511,7 +514,7 @@ func reconcile(c reconciler, key string) error {
 			return nil
 		}
 		logrus.Infof("Delete pipelinerun: %s", key)
-		if err = c.deletePipelineRun(ctx, namespace, name); err != nil {
+		if err = r.deletePipelineRun(ctx, namespace, name); err != nil {
 			return fmt.Errorf("delete pipelinerun: %v", err)
 		}
 		return nil
@@ -521,25 +524,26 @@ func reconcile(c reconciler, key string) error {
 	case wantPipelineRun && !havePipelineRun && !reported:
 		if pj.Spec.PipelineRunSpec == nil || pj.Spec.PipelineRunSpec.PipelineRef.Name == "" {
 			logrus.Infof("Create pipelinerun using external pipeline runner service: %s", key)
-			pipelineRunName, err := c.requestPipelineRun(ctx, namespace, *pj)
+			pipelineRunName, err := r.requestPipelineRun(ctx, namespace, *pj)
 			if err != nil {
 				// Set the prow job in error state to avoid an endless loop if the pipeline request fails
-				return updateProwJobState(c, pj, prowjobv1.ErrorState, err.Error())
+				return updateProwJobState(r, pj, prowjobv1.ErrorState, err.Error())
 			}
-			p, err = c.getPipelineRun(ctx, namespace, pipelineRunName)
+			p, err = r.getPipelineRun(ctx, namespace, pipelineRunName)
 			if err != nil {
 				return fmt.Errorf("finding pipeline %q: %v", pipelineRunName, err)
 			}
 		} else {
 			logrus.Infof("Create pipelinerun using embedded spec: %s", key)
-			id, err := c.pipelineID(*pj)
+			id, err := r.pipelineID(*pj)
 			if err != nil {
 				return fmt.Errorf("failed to get pipeline id: %v", err)
 			}
 			pj.Status.BuildID = id
+			pj.Status.URL = pjutil.JobURL(c.config().Plank, *pj, c.log)
 			pr = makePipelineGitResource(*pj)
 			logrus.Infof("Create pipeline git resource: %s", key)
-			if pr, err = c.createPipelineResource(ctx, namespace, pr); err != nil {
+			if pr, err = r.createPipelineResource(ctx, namespace, pr); err != nil {
 				return fmt.Errorf("create PipelineResource: %v", err)
 			}
 			newp, err := makePipelineRun(*pj, id, pr)
@@ -547,7 +551,7 @@ func reconcile(c reconciler, key string) error {
 				return fmt.Errorf("make PipelineRun: %v", err)
 			}
 			logrus.Infof("Create pipelinerun%s", key)
-			p, err = c.createPipelineRun(ctx, namespace, newp)
+			p, err = r.createPipelineRun(ctx, namespace, newp)
 			if err != nil {
 				return fmt.Errorf("create PipelineRun: %v", err)
 			}
@@ -558,7 +562,7 @@ func reconcile(c reconciler, key string) error {
 		return fmt.Errorf("no pipelinerun found or created for %q, wantPipelineRun was %v", key, wantPipelineRun)
 	}
 	wantState, wantMsg := prowJobStatus(p.Status)
-	return updateProwJobState(c, pj, wantState, wantMsg)
+	return updateProwJobState(r, pj, wantState, wantMsg)
 }
 
 func updateProwJobState(c reconciler, pj *prowjobv1.ProwJob, state prowjobv1.ProwJobState, msg string) error {
