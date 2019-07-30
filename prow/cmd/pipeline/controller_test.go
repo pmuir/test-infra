@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
-
 	prowjobv1 "k8s.io/test-infra/prow/apis/prowjobs/v1"
 	"k8s.io/test-infra/prow/kube"
 	"k8s.io/test-infra/prow/pod-utils/decorate"
@@ -156,6 +156,11 @@ func (r *fakeReconciler) getPipelineRunsWithSelector(context, namespace, selecto
 		}
 	}
 	if len(runs) > 0 {
+		if len(runs) > 1 {
+			sort.Slice(runs, func(i, j int) bool {
+				return runs[i].CreationTimestamp.Before(&runs[j].CreationTimestamp)
+			})
+		}
 		return runs, nil
 	}
 	return nil, apierrors.NewNotFound(pipelinev1alpha1.Resource("PipelineRun"), pjName)
@@ -374,6 +379,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			err: true,
@@ -390,6 +396,8 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
+
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedPipelineRun: noPipelineRunChange,
@@ -406,6 +414,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				delete(p.Labels, kube.CreatedByProw)
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
@@ -439,6 +448,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedJob:         noJobChange,
@@ -471,6 +481,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				delete(p.Labels, kube.CreatedByProw)
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
@@ -504,6 +515,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -539,6 +551,7 @@ func TestReconcile(t *testing.T) {
 					Type:    duckv1alpha1.ConditionReady,
 					Message: "hello",
 				})
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -578,6 +591,7 @@ func TestReconcile(t *testing.T) {
 					Status:  corev1.ConditionTrue,
 					Message: "hello",
 				})
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -618,6 +632,7 @@ func TestReconcile(t *testing.T) {
 					Status:  corev1.ConditionFalse,
 					Message: "hello",
 				})
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -665,6 +680,7 @@ func TestReconcile(t *testing.T) {
 					Status:  corev1.ConditionTrue,
 					Message: "hello",
 				})
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 		},
@@ -681,6 +697,7 @@ func TestReconcile(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 		},
@@ -755,6 +772,7 @@ func TestReconcile(t *testing.T) {
 					Status:  corev1.ConditionTrue,
 					Message: "hello",
 				})
+				p.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{p}
 			}(),
 		},
@@ -788,6 +806,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Succeeded",
 					Message: "Metapipeline",
 				})
+				metaP.CreationTimestamp = metav1.Now()
 				execP, err := makePipelineRun(pj, "5", pr)
 				if err != nil {
 					panic(err)
@@ -798,6 +817,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Succeeded",
 					Message: "Exec pipeline",
 				})
+				execP.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{metaP, execP}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -841,6 +861,8 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Succeeded",
 					Message: "Metapipeline",
 				})
+				metaP.CreationTimestamp = metav1.Now()
+
 				execP, err := makePipelineRun(pj, "5", pr)
 				if err != nil {
 					panic(err)
@@ -851,6 +873,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Running",
 					Message: "Exec pipeline",
 				})
+				execP.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{metaP, execP}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -893,6 +916,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Succeeded",
 					Message: "Metapipeline",
 				})
+				metaP.CreationTimestamp = metav1.Now()
 				execP, err := makePipelineRun(pj, "5", pr)
 				if err != nil {
 					panic(err)
@@ -903,6 +927,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Failed",
 					Message: "Exec pipeline",
 				})
+				execP.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{metaP, execP}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
@@ -946,6 +971,7 @@ func TestReconcile(t *testing.T) {
 					Reason:  "Succeeded",
 					Message: "Metapipeline",
 				})
+				metaP.CreationTimestamp = metav1.Now()
 				execP, err := makePipelineRun(pj, "5", pr)
 				if err != nil {
 					panic(err)
@@ -954,6 +980,7 @@ func TestReconcile(t *testing.T) {
 					Type:    duckv1alpha1.ConditionReady,
 					Message: "hello",
 				})
+				execP.CreationTimestamp = metav1.Now()
 				return []*pipelinev1alpha1.PipelineRun{metaP, execP}
 			}(),
 			expectedJob: func(pj prowjobv1.ProwJob, _ pipelinev1alpha1.PipelineRun) prowjobv1.ProwJob {
