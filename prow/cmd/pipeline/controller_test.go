@@ -326,7 +326,6 @@ func TestReconcile(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
-			p.CreationTimestamp = metav1.Now()
 			return *p
 		},
 	},
