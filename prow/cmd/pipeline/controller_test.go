@@ -156,9 +156,11 @@ func (r *fakeReconciler) getPipelineRunsWithSelector(context, namespace, selecto
 		}
 	}
 	if len(runs) > 0 {
-		sort.Slice(runs, func(i, j int) bool {
-			return runs[i].CreationTimestamp.Before(&runs[j].CreationTimestamp)
-		})
+		if len(runs) > 1 {
+			sort.Slice(runs, func(i, j int) bool {
+				return runs[i].CreationTimestamp.Before(&runs[j].CreationTimestamp)
+			})
+		}
 		return runs, nil
 	}
 	return nil, apierrors.NewNotFound(pipelinev1alpha1.Resource("PipelineRun"), pjName)
